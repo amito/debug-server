@@ -1,8 +1,14 @@
 from functools import wraps
+import os
+import pathlib
 import signal
 import sys
 
 from debug_server.server import UnixStreamDebugServer
+
+
+_DEBUGGER_ENABLED_FILENAME = os.path.join('/tmp', f'{os.getpid()}.dbg-enabled')
+
 
 """
 There are generally two modes of running the debugger:
@@ -47,7 +53,7 @@ class GlobalDebugger:
         self._debug_server = UnixStreamDebugServer(signum=self._signum)
 
     def _global_exception_hook(self, exctype, value, traceback):
-        if not self._run_always:
+        if not self._debug_server:
             self._create_server()
         self._debug_server.handle_request(traceback=traceback)
 
@@ -55,19 +61,27 @@ class GlobalDebugger:
         sys.excepthook = self._global_exception_hook
 
     def _debugger_handler(self, signum, frame):
-        #self._debug_server.set_frame(frame)
+        self._create_server()
         self._debug_server.handle_request(frame=frame)
 
     def _patch_signal_handler(self):
         _add_handler(self._signum, self._debugger_handler)
 
+    def _create_debugger_enabled_file(self):
+        pathlib.Path(_DEBUGGER_ENABLED_FILENAME).touch()
+
     def start(self):
         if self._run_always:
-            self._create_server()
+            self._create_debugger_enabled_file()
             self._patch_signal_handler()
         self._patch_global_exception_hook()
+
+    def __del__(self):
+        if os.path.exists(_DEBUGGER_ENABLED_FILENAME):
+            os.unlink(_DEBUGGER_ENABLED_FILENAME)
 
 
 def interact(run_always=False):
     global_debugger = GlobalDebugger(run_always=run_always)
     global_debugger.start()
+

@@ -4,6 +4,7 @@ import signal
 import socket
 import stat
 import sys
+import time
 
 
 def _pid_exists(pid):
@@ -14,17 +15,15 @@ def _pid_exists(pid):
     return True
 
 
-def _is_socket(path):
-    try:
-        mode = os.stat(path).st_mode
-    except FileNotFoundError:
-        # Basically, this check suffices... if the socket doesn't exist we'll
-        # get here, and it's a good enough condition to trigger its creation
-        # via the signal:
-        return False
-    # If we return False here, something really strange is happening - the file
-    # is there, but it's not a socket...
-    return stat.S_ISSOCK(mode)
+def _wait_for_socket(path):
+    for attempt in range(10):
+        try:
+            mode = os.stat(path).st_mode
+        except FileNotFoundError:
+            time.sleep(1)
+            continue
+        if not stat.S_ISSOCK(mode):
+            raise AttributeError("Found process communication file, but it is not a Unix Domain Socket")
 
 
 def _attach_to(pid):
@@ -33,17 +32,27 @@ def _attach_to(pid):
         return False
 
     _unix_socket_path = os.path.join(f'/tmp/{pid}-debug-socket')
+    _debugger_enabled_filename = os.path.join(f'/tmp/{pid}.dbg-enabled')
 
     # The UNIX domain socket file does not exist, this is either to the
     # debugger not being enabled in the process (wrong PID?), due to a bug
     # causing the debugger not to start, or due to the debugger being run
     # in a "run always" mode, so we need to trigger it with a signal:
-    # os.kill(pid, signal.SIGUSR1)
+
+    try:
+        os.stat(_unix_socket_path)
+    except FileNotFoundError:
+        if not os.path.isfile(_debugger_enabled_filename):
+            print (f'No debugger available for PID {pid}. Aborting.')
+            return False
+
+        # The file is there, no just need to trigger the debugger:
+        os.kill(pid, signal.SIGINT)
 
     print(f'Trying to attach to process with PID {pid}...')
 
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-        # Connect to server and send data
+        _wait_for_socket(_unix_socket_path)
         sock.connect(_unix_socket_path)
 
         received = str(sock.recv(4096), "utf-8")
