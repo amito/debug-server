@@ -1,9 +1,9 @@
 from . import interact
 
-# interact(bind_port=7777, local=True)
 interact(run_always=True)
 
-raise AttributeError()
+# Raising an exception will trigger the PDB in the exception handler:
+# raise AttributeError()
 
 while True:
     import time
